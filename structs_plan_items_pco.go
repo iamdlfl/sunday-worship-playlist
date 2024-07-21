@@ -1,21 +1,21 @@
 package main
 
-type PlanItems struct {
-	Links    Links           `json:"links"`
-	Included []interface{}   `json:"included"`
-	Meta     Meta            `json:"meta"`
-	Data     []PlanItemsData `json:"data"`
+type PlanItemsPCO struct {
+	Links    LinksPCO           `json:"links"`
+	Included []interface{}      `json:"included"`
+	Meta     MetaPCO            `json:"meta"`
+	Data     []PlanItemsDataPCO `json:"data"`
 }
 
-type PlanItemsData struct {
-	Type          string                 `json:"type"`
-	Id            string                 `json:"id"`
-	Relationships Relationships          `json:"relationships"`
-	Links         Links                  `json:"links"`
-	Attributes    PlanItemDataAttributes `json:"attributes"`
+type PlanItemsDataPCO struct {
+	Type          string                    `json:"type"`
+	Id            string                    `json:"id"`
+	Relationships Relationships             `json:"relationships"`
+	Links         LinksPCO                  `json:"links"`
+	Attributes    PlanItemDataAttributesPCO `json:"attributes"`
 }
 
-type PlanItemDataAttributes struct {
+type PlanItemDataAttributesPCO struct {
 	CreatedAt                      string      `json:"created_at"`
 	CustomArrangementSequence      interface{} `json:"custom_arrangement_sequence"`
 	CustomArrangementSequenceFull  interface{} `json:"custom_arrangement_sequence_full"`

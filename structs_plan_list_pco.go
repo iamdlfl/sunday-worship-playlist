@@ -1,21 +1,21 @@
 package main
 
-type PlanList struct {
-	Links    Links          `json:"links"`
-	Included []interface{}  `json:"included"`
-	Meta     Meta           `json:"meta"`
-	Data     []PlanListData `json:"data"`
+type PlanListPCO struct {
+	Links    LinksPCO          `json:"links"`
+	Included []interface{}     `json:"included"`
+	Meta     MetaPCO           `json:"meta"`
+	Data     []PlanListDataPCO `json:"data"`
 }
 
-type PlanListData struct {
-	Type          string             `json:"type"`
-	Id            string             `json:"id"`
-	Links         Links              `json:"links"`
-	Attributes    PlanListAttributes `json:"attributes"`
-	Relationships Relationships      `json:"relationships"`
+type PlanListDataPCO struct {
+	Type          string                `json:"type"`
+	Id            string                `json:"id"`
+	Links         LinksPCO              `json:"links"`
+	Attributes    PlanListAttributesPCO `json:"attributes"`
+	Relationships Relationships         `json:"relationships"`
 }
 
-type PlanListAttributes struct {
+type PlanListAttributesPCO struct {
 	CanViewOrder         bool        `json:"can_view_order"`
 	CreatedAt            string      `json:"created_at"`
 	Dates                string      `json:"dates"`

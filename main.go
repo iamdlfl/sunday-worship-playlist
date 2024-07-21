@@ -1,19 +1,51 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"gopkg.in/ini.v1"
 )
 
 var client http.Client = http.Client{}
+var un string
+var pw string
+
+var cid string
+var cs string
+var rt string
+
+var token string
+
+var spotifyApiUrl = "https://api.spotify.com/v1/"
+var userId = "onthe_dl"
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	cfg, err := ini.Load(".settings.ini")
+	if err != nil {
+		log.Panic(err)
+	}
+	un = cfg.Section("pco").Key("un").String()
+	pw = cfg.Section("pco").Key("pw").String()
+
+	cid = cfg.Section("spotify").Key("cid").String()
+	cs = cfg.Section("spotify").Key("cs").String()
+	rt = cfg.Section("spotify").Key("rt").String()
+
+	token, err = getSpotifyToken(cid, cs, rt)
+	if err != nil {
+		log.Panic(err)
+	}
+
 	today := time.Now()
 	dayNumber := int(today.Weekday())
 	daysToAdd := 7 - dayNumber
@@ -23,74 +55,207 @@ func main() {
 
 	upcomingSunday := today.Add(time.Hour * 24 * time.Duration(daysToAdd))
 	formattedSunday := upcomingSunday.Format("2006-01-02")
-	planNumber, err := getPlanNumber(formattedSunday)
+	planNumber, err := getPlanNumberPco(formattedSunday)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	// Remove when done testing
 	// planNumber = "72665641"
-	planNumber = "72665642"
-	songs, err := getSongs(planNumber)
+	// planNumber = "72665642"
+	songs, err := getSongsPco(planNumber)
 	if err != nil {
 		log.Panic(err)
 	}
+	newSongs := make([]SongInfo, 0, len(songs))
 	for _, song := range songs {
-		getSongInfo(&song)
+		newSong, err := getSongInfoPco(song)
+		if err != nil {
+			log.Println(err)
+		}
+		newSongs = append(newSongs, *newSong)
 	}
+
+	spotifyIds := make([]string, 0, len(newSongs))
+	for _, song := range newSongs {
+		// set up search and do it
+		search := "track:" + song.Name
+		result, err := doSpotifySearch(search, "track")
+		if err != nil {
+			log.Println(err)
+		}
+
+		// create variables to track which Spotify song has the most
+		// artist matches to the Author(s) in Planning Center
+		songCheck := make(map[string]int)
+		numToBeat := 0
+		trackId := ""
+		for _, item := range result.Tracks.Items {
+			// set songcheck to 0 for this item (spotify song) ID
+			songCheck[item.ID] = 0
+			// iterate through the Spotify artists
+			for _, artist := range item.Artists {
+				// process the PCO song authors, splitting on comma and " and"
+				// note space included in " and", which is neccessary so that
+				// "Chandler Moore" (for instance) doesn't get split between "Ch" and "ler"
+				tempAuthors := strings.Split(song.Author, ",")
+				authors := make([]string, 0)
+				for _, a := range tempAuthors {
+					new := strings.Split(a, " and")
+					authors = append(authors, new...)
+				}
+				for _, author := range authors {
+					if author == "" {
+						continue
+					}
+					// remove whitespace
+					a := strings.TrimSpace(author)
+					if strings.EqualFold(artist.Name, a) {
+						// if there's a match, increase the match tracking by one
+						songCheck[item.ID] += 1
+					}
+				}
+			}
+			// I think Spotify orders the results by their best match/popular matches
+			// So we will only check if something is GREATER than the greatest number
+			// of author matches (not greater or equal to). This way we can preserve
+			// Spotify's order of preference if there is a tie.
+			if songCheck[item.ID] > numToBeat {
+				trackId = item.ID
+			}
+		}
+		spotifyIds = append(spotifyIds, trackId)
+	}
+
+	log.Println(spotifyIds)
+	playlistName := "Sunday Worship - " + formattedSunday
+	plSearch, err := doSpotifySearch(playlistName+" onthe_dl", "playlist")
+	if err != nil {
+		log.Panic(err)
+	}
+	log.Printf("%+v", plSearch)
+	return
+
+	plData := make(map[string]interface{})
+	plData["name"] = playlistName
+	plData["public"] = true
+	jplBody, _ := json.Marshal(plData)
+	plReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"users/"+userId+"/playlists", bytes.NewReader(jplBody))
+	if err != nil {
+		log.Panic(err)
+	}
+
+	plReq.Header.Set("Authorization", "Bearer "+token)
+	plReq.Header.Set("Content-Type", "application/json")
+	plResp, err := client.Do(plReq)
+	if err != nil {
+		log.Panic(err)
+	}
+	defer plResp.Body.Close()
+	plBody, err := io.ReadAll(plResp.Body)
+	if err != nil {
+		log.Panic(err)
+	}
+	log.Println(string(plBody))
+	if plResp.StatusCode >= http.StatusBadRequest {
+		log.Panic("bad response")
+	}
+
+	pl, err := UnmarshalSpotifyPlaylist(plBody)
+	if err != nil {
+		log.Panic(err)
+	}
+	playlistId := pl.ID
+	tracksString := make([]string, 0)
+	for _, track := range spotifyIds {
+		tracksString = append(tracksString, "spotify:track:"+track)
+	}
+	log.Println(tracksString)
+	addData := make(map[string]interface{})
+	addData["playlist_id"] = playlistId
+	addData["uris"] = tracksString
+	jaBody, _ := json.Marshal(addData)
+	addReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"playlists/"+playlistId+"/tracks", bytes.NewReader(jaBody))
+	if err != nil {
+		log.Panic(err)
+	}
+	addReq.Header.Set("Authorization", "Bearer "+token)
+	addReq.Header.Set("Content-Type", "application/json")
+
+	addResp, err := client.Do(addReq)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	defer addResp.Body.Close()
+	addBody, err := io.ReadAll(addResp.Body)
+	if err != nil {
+		log.Panic(err)
+	}
+	log.Println(string(addBody))
+	if addResp.StatusCode >= http.StatusBadRequest {
+		log.Panic("bad response")
+	}
+
 }
 
-func getSongInfo(songInfo *SongInfo) error {
+func getSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
+	newSong := SongInfo{
+		Name:         songInfo.Name,
+		Id:           songInfo.Id,
+		ArrangmentId: songInfo.ArrangmentId,
+		Key:          songInfo.Key,
+	}
 	log.Println("Getting info for song: " + songInfo.Name)
-	req := getRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id)
-	arrReq := getRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id + "/arrangements/" + songInfo.ArrangmentId)
+	req := getPcoRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id)
+	arrReq := getPcoRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id + "/arrangements/" + songInfo.ArrangmentId)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	arrResp, err := client.Do(arrReq)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer arrResp.Body.Close()
 	arrBody, err := io.ReadAll(arrResp.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	var song Song
-	var arrangement Arrangement
+	var song SongPCO
+	var arrangement ArrangementPCO
 
 	if jsonErr, jsonErr2 := json.Unmarshal(body, &song), json.Unmarshal(arrBody, &arrangement); jsonErr != nil || jsonErr2 != nil {
 		log.Println(jsonErr)
 		log.Println(jsonErr2)
-		return errors.New("There was an error unmarshalling into song or arrangement")
+		return nil, errors.New("There was an error unmarshalling into song or arrangement")
 	}
-	songInfo.ArrangementName = arrangement.Data.Attributes.ArrangementName
-	songInfo.ArrangementNotes = arrangement.Data.Attributes.Notes
-	songInfo.Author = song.Data.Attributes.Author
-	songInfo.CCLI = fmt.Sprintf("%d", song.Data.Attributes.CcliNum)
-	songInfo.CopyrightInfo = song.Data.Attributes.Copyright
-	songInfo.Lyrics = processLyrics(arrangement.Data.Attributes.Lyrics)
-	songInfo.SongAdmin = song.Data.Attributes.Admin
-	songInfo.SongNotes = song.Data.Attributes.Notes
-	return nil
+	newSong.ArrangementName = arrangement.Data.Attributes.ArrangementName
+	newSong.ArrangementNotes = arrangement.Data.Attributes.Notes
+	newSong.Author = song.Data.Attributes.Author
+	newSong.CCLI = fmt.Sprintf("%d", song.Data.Attributes.CcliNum)
+	newSong.CopyrightInfo = song.Data.Attributes.Copyright
+	newSong.Lyrics = processLyrics(arrangement.Data.Attributes.Lyrics)
+	newSong.SongAdmin = song.Data.Attributes.Admin
+	newSong.SongNotes = song.Data.Attributes.Notes
+	return &newSong, nil
 }
 
-func getSongs(planNumber string) ([]SongInfo, error) {
-	items, err := getItems(planNumber)
+func getSongsPco(planNumber string) ([]SongInfo, error) {
+	items, err := getItemsPco(planNumber)
 	if err != nil {
 		return nil, err
 	}
 
 	results := make([]SongInfo, 0, len((*items).Data))
 	for _, item := range (*items).Data {
-		if item.Attributes.ItemType == "song" || item.Relationships.Song.Data != (RelationshipDataAttributes{}) {
+		if item.Attributes.ItemType == "song" || item.Relationships.Song.Data != (RelationshipDataAttributesPCO{}) {
 			songInfo := SongInfo{
 				Name:         item.Attributes.Title,
 				Id:           item.Relationships.Song.Data.Id,
@@ -103,8 +268,8 @@ func getSongs(planNumber string) ([]SongInfo, error) {
 	return results, nil
 }
 
-func getItems(planNumber string) (*PlanItems, error) {
-	req := getRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans/" + planNumber + "/items")
+func getItemsPco(planNumber string) (*PlanItemsPCO, error) {
+	req := getPcoRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans/" + planNumber + "/items")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -114,15 +279,15 @@ func getItems(planNumber string) (*PlanItems, error) {
 	if err != nil {
 		return nil, err
 	}
-	var jsonBody PlanItems
+	var jsonBody PlanItemsPCO
 	if jsonErr := json.Unmarshal(body, &jsonBody); jsonErr != nil {
 		return nil, jsonErr
 	}
 	return &jsonBody, nil
 }
 
-func getPlanNumber(sundayDate string) (string, error) {
-	req := getRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans?order=-sort_date&per_page=25")
+func getPlanNumberPco(sundayDate string) (string, error) {
+	req := getPcoRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans?order=-sort_date&per_page=25")
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -132,7 +297,7 @@ func getPlanNumber(sundayDate string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var jsonBody PlanList
+	var jsonBody PlanListPCO
 
 	if jsonErr := json.Unmarshal(body, &jsonBody); jsonErr != nil {
 		return "", jsonErr
@@ -147,18 +312,101 @@ func getPlanNumber(sundayDate string) (string, error) {
 	return upcomingPlanNumber, nil
 }
 
-func getRequest(url string) *http.Request {
+func getPcoRequest(url string) *http.Request {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		temp := http.Request{}
 		req = &temp
 	}
-	req.SetBasicAuth(getAuth())
+	req.SetBasicAuth(getPcoAuth())
 	return req
 }
 
-func getAuth() (string, string) {
-	return "", ""
+func getPcoAuth() (string, string) {
+	return un, pw
+}
+
+func doSpotifySearch(searchTerm, searchType string) (SpotifyStructs, error) {
+	escaped := url.PathEscape(searchTerm)
+	req := getSpotifyRequest(spotifyApiUrl + "search?type=" + searchType + "&limit=5&q=" + escaped)
+	resp, err := client.Do(req)
+	if err != nil {
+		return SpotifyStructs{}, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return SpotifyStructs{}, err
+	}
+	log.Println(string(body))
+	spotifySearchResult, err := UnmarshalSpotifyStructs(body)
+	if err != nil {
+		return SpotifyStructs{}, err
+	}
+	return spotifySearchResult, nil
+}
+
+func getSpotifyRequest(url string) *http.Request {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		temp := http.Request{}
+		req = &temp
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return req
+}
+
+func getSpotifyToken(cid, cs, rt string) (string, error) {
+	u := "https://accounts.spotify.com/api/token"
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", rt)
+	req, err := http.NewRequest(http.MethodPost, u, strings.NewReader(data.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(cid, cs)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= http.StatusBadRequest {
+		log.Println("Bad response getting token")
+		log.Println(string(body))
+		return "", errors.New("response not 200")
+	}
+	log.Println(string(body))
+	var jsonBody map[string]interface{}
+	err = json.Unmarshal(body, &jsonBody)
+	if err != nil {
+		return "", err
+	}
+	token, ok := jsonBody["access_token"]
+	if !ok {
+		return "", errors.New("no access token, something is wrong")
+	}
+	tokenString, ok := token.(string)
+	if !ok {
+		return "", errors.New("access token not string")
+	}
+	ref, ok := jsonBody["refresh_token"]
+	if !ok {
+		log.Println("no refresh token")
+	} else {
+		ref_tok, ok := ref.(string)
+		if ok {
+			log.Println("refresh token equal?")
+			log.Println(ref_tok == rt)
+		}
+	}
+	return tokenString, nil
 }
 
 func processLyrics(s string) string {
