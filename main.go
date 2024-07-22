@@ -32,7 +32,8 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cfg, err := ini.Load(".settings.ini")
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 	un = cfg.Section("pco").Key("un").String()
 	pw = cfg.Section("pco").Key("pw").String()
@@ -43,7 +44,8 @@ func main() {
 
 	token, err = getSpotifyToken(cid, cs, rt)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 
 	today := time.Now()
@@ -57,15 +59,17 @@ func main() {
 	formattedSunday := upcomingSunday.Format("2006-01-02")
 	planNumber, err := getPlanNumberPco(formattedSunday)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 
 	// Remove when done testing
 	// planNumber = "72665641"
-	// planNumber = "72665642"
+	planNumber = "72665642"
 	songs, err := getSongsPco(planNumber)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 	newSongs := make([]SongInfo, 0, len(songs))
 	for _, song := range songs {
@@ -88,16 +92,20 @@ func main() {
 		// create variables to track which Spotify song has the most
 		// artist matches to the Author(s) in Planning Center
 		songCheck := make(map[string]int)
-		numToBeat := 0
+		numToBeat := -1
 		trackId := ""
 		for _, item := range result.Tracks.Items {
 			// set songcheck to 0 for this item (spotify song) ID
 			songCheck[item.ID] = 0
+			log.Println("============")
+			log.Println(item.Name)
+			log.Println(item.Artists)
 			// iterate through the Spotify artists
 			for _, artist := range item.Artists {
 				// process the PCO song authors, splitting on comma and " and"
 				// note space included in " and", which is neccessary so that
 				// "Chandler Moore" (for instance) doesn't get split between "Ch" and "ler"
+				log.Println(song.Author)
 				tempAuthors := strings.Split(song.Author, ",")
 				authors := make([]string, 0)
 				for _, a := range tempAuthors {
@@ -124,73 +132,128 @@ func main() {
 				trackId = item.ID
 			}
 		}
-		spotifyIds = append(spotifyIds, trackId)
+		if trackId != "" {
+			spotifyIds = append(spotifyIds, trackId)
+		}
 	}
 
 	log.Println(spotifyIds)
-	playlistName := "Sunday Worship - " + formattedSunday
-	plSearch, err := doSpotifySearch(playlistName+" onthe_dl", "playlist")
+	playlistName := "Sunday Worship - " + "2024-07-14" //+ formattedSunday
+	existingPlReq := getSpotifyRequest(spotifyApiUrl + "me/playlists?limit=50")
+	existingPlResp, err := client.Do(existingPlReq)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
-	log.Printf("%+v", plSearch)
-	return
-
-	plData := make(map[string]interface{})
-	plData["name"] = playlistName
-	plData["public"] = true
-	jplBody, _ := json.Marshal(plData)
-	plReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"users/"+userId+"/playlists", bytes.NewReader(jplBody))
+	defer existingPlResp.Body.Close()
+	if existingPlResp.StatusCode >= http.StatusBadRequest {
+		log.Println("Can't get my playlists")
+	}
+	existingPlBody, err := io.ReadAll(existingPlResp.Body)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
-
-	plReq.Header.Set("Authorization", "Bearer "+token)
-	plReq.Header.Set("Content-Type", "application/json")
-	plResp, err := client.Do(plReq)
+	existingPlaylists, err := UnmarshalMyPlayLists(existingPlBody)
 	if err != nil {
-		log.Panic(err)
-	}
-	defer plResp.Body.Close()
-	plBody, err := io.ReadAll(plResp.Body)
-	if err != nil {
-		log.Panic(err)
-	}
-	log.Println(string(plBody))
-	if plResp.StatusCode >= http.StatusBadRequest {
-		log.Panic("bad response")
+		log.Println(err)
+		return
 	}
 
-	pl, err := UnmarshalSpotifyPlaylist(plBody)
-	if err != nil {
-		log.Panic(err)
+	playListId := ""
+
+	for i := 0; i < 6 && existingPlaylists.Next != ""; i++ {
+		for _, pl := range existingPlaylists.Items {
+			if playlistName == pl.Name {
+				playListId = pl.ID
+			}
+		}
+		existingPlReq := getSpotifyRequest(existingPlaylists.Next)
+		existingPlResp, err := client.Do(existingPlReq)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer existingPlResp.Body.Close()
+		if existingPlResp.StatusCode >= http.StatusBadRequest {
+			log.Println("Can't get my playlists")
+		}
+		existingPlBody, err := io.ReadAll(existingPlResp.Body)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		existingPlaylists, err = UnmarshalMyPlayLists(existingPlBody)
+		if err != nil {
+			log.Println(err)
+			return
+		}
 	}
-	playlistId := pl.ID
+
+	if playListId == "" {
+
+		plData := make(map[string]interface{})
+		plData["name"] = playlistName
+		plData["public"] = true
+		jplBody, _ := json.Marshal(plData)
+		plReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"users/"+userId+"/playlists", bytes.NewReader(jplBody))
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		plReq.Header.Set("Authorization", "Bearer "+token)
+		plReq.Header.Set("Content-Type", "application/json")
+		plResp, err := client.Do(plReq)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer plResp.Body.Close()
+		plBody, err := io.ReadAll(plResp.Body)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		if plResp.StatusCode >= http.StatusBadRequest {
+			log.Panic("bad response")
+		}
+
+		pl, err := UnmarshalSpotifyPlaylist(plBody)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		playListId = pl.ID
+	}
+
 	tracksString := make([]string, 0)
 	for _, track := range spotifyIds {
 		tracksString = append(tracksString, "spotify:track:"+track)
 	}
-	log.Println(tracksString)
 	addData := make(map[string]interface{})
-	addData["playlist_id"] = playlistId
+	addData["playlist_id"] = playListId
 	addData["uris"] = tracksString
 	jaBody, _ := json.Marshal(addData)
-	addReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"playlists/"+playlistId+"/tracks", bytes.NewReader(jaBody))
+	addReq, err := http.NewRequest(http.MethodPost, spotifyApiUrl+"playlists/"+playListId+"/tracks", bytes.NewReader(jaBody))
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 	addReq.Header.Set("Authorization", "Bearer "+token)
 	addReq.Header.Set("Content-Type", "application/json")
 
 	addResp, err := client.Do(addReq)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 
 	defer addResp.Body.Close()
 	addBody, err := io.ReadAll(addResp.Body)
 	if err != nil {
-		log.Panic(err)
+		log.Println(err)
+		return
 	}
 	log.Println(string(addBody))
 	if addResp.StatusCode >= http.StatusBadRequest {
@@ -328,7 +391,7 @@ func getPcoAuth() (string, string) {
 
 func doSpotifySearch(searchTerm, searchType string) (SpotifyStructs, error) {
 	escaped := url.PathEscape(searchTerm)
-	req := getSpotifyRequest(spotifyApiUrl + "search?type=" + searchType + "&limit=5&q=" + escaped)
+	req := getSpotifyRequest(spotifyApiUrl + "search?type=" + searchType + "&limit=25&q=" + escaped)
 	resp, err := client.Do(req)
 	if err != nil {
 		return SpotifyStructs{}, err
@@ -339,7 +402,6 @@ func doSpotifySearch(searchTerm, searchType string) (SpotifyStructs, error) {
 	if err != nil {
 		return SpotifyStructs{}, err
 	}
-	log.Println(string(body))
 	spotifySearchResult, err := UnmarshalSpotifyStructs(body)
 	if err != nil {
 		return SpotifyStructs{}, err
@@ -382,7 +444,6 @@ func getSpotifyToken(cid, cs, rt string) (string, error) {
 		log.Println(string(body))
 		return "", errors.New("response not 200")
 	}
-	log.Println(string(body))
 	var jsonBody map[string]interface{}
 	err = json.Unmarshal(body, &jsonBody)
 	if err != nil {
