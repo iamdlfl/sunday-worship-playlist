@@ -123,10 +123,14 @@ func main() {
 					// remove whitespace
 					a := strings.TrimSpace(author)
 
+					// if there's a match, increase the match tracking by one
 					if strings.EqualFold(artist.Name, a) {
-						// if there's a match, increase the match tracking by one
 						songCheck[item.ID] += 1
-					} else if strings.Contains(artist.Name, "Getty") && strings.Contains(a, "Getty") {
+					} else if strings.Contains(artist.Name, "Getty") && strings.Contains(a, "Getty") { // Keith & Kirsten Getty are hard to parse/match
+						songCheck[item.ID] += 1
+					} else if (strings.Contains(artist.Name, "Shane & Shane") ||
+						strings.Contains(artist.Name, "Shane and Shane")) &&
+						strings.Contains(a, "Shane Barnard") {
 						songCheck[item.ID] += 1
 					}
 				}
@@ -202,7 +206,6 @@ func main() {
 	}
 
 	if playListId == "" {
-
 		plData := make(map[string]interface{})
 		plData["name"] = playlistName
 		plData["public"] = true
@@ -338,6 +341,9 @@ func getSongsPco(planNumber string) ([]SongInfo, error) {
 			}
 			results = append(results, songInfo)
 		}
+	}
+	if len(results) == 0 {
+		return nil, errors.New("there were no songs in planning center")
 	}
 	return results, nil
 }
