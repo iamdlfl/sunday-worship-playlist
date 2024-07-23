@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -94,6 +95,9 @@ func main() {
 		songCheck := make(map[string]int)
 		numToBeat := -1
 		trackId := ""
+		slices.SortFunc(result.Tracks.Items, func(a, b ItemSearch) int {
+			return int(a.Popularity) - int(b.Popularity)
+		})
 		for _, item := range result.Tracks.Items {
 			// set songcheck to 0 for this item (spotify song) ID
 			songCheck[item.ID] = 0
@@ -118,8 +122,11 @@ func main() {
 					}
 					// remove whitespace
 					a := strings.TrimSpace(author)
+
 					if strings.EqualFold(artist.Name, a) {
 						// if there's a match, increase the match tracking by one
+						songCheck[item.ID] += 1
+					} else if strings.Contains(artist.Name, "Getty") && strings.Contains(a, "Getty") {
 						songCheck[item.ID] += 1
 					}
 				}
@@ -162,10 +169,14 @@ func main() {
 
 	playListId := ""
 
-	for i := 0; i < 6 && existingPlaylists.Next != ""; i++ {
+	for i := 0; i < 10 && existingPlaylists.Next != ""; i++ {
 		for _, pl := range existingPlaylists.Items {
 			if playlistName == pl.Name {
 				playListId = pl.ID
+				if pl.Tracks.Total >= 4 {
+					log.Println("Playlist already created")
+					return
+				}
 			}
 		}
 		existingPlReq := getSpotifyRequest(existingPlaylists.Next)
