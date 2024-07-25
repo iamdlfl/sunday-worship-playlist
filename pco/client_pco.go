@@ -1,4 +1,4 @@
-package main
+package pco
 
 import (
 	"encoding/json"
@@ -14,9 +14,21 @@ import (
 
 type pco struct {
 	ConfigFileName string
+	client         *http.Client
 }
 
-func (p pco) getSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
+func NewPcoClient(configFile string, client *http.Client) *pco {
+	var c http.Client
+	if client == nil {
+		c = http.Client{}
+	} else {
+		c = *client
+	}
+	p := pco{ConfigFileName: configFile, client: &c}
+	return &p
+}
+
+func (p pco) GetSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
 	newSong := SongInfo{
 		Name:         songInfo.Name,
 		Id:           songInfo.Id,
@@ -26,7 +38,7 @@ func (p pco) getSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
 	log.Println("Getting info for song: " + songInfo.Name)
 	req := p.getPcoRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id)
 	arrReq := p.getPcoRequest("https://api.planningcenteronline.com/services/v2/songs/" + songInfo.Id + "/arrangements/" + songInfo.ArrangmentId)
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +48,7 @@ func (p pco) getSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
 		return nil, err
 	}
 
-	arrResp, err := client.Do(arrReq)
+	arrResp, err := p.client.Do(arrReq)
 	if err != nil {
 		return nil, err
 	}
@@ -58,14 +70,14 @@ func (p pco) getSongInfoPco(songInfo SongInfo) (*SongInfo, error) {
 	newSong.Author = song.Data.Attributes.Author
 	newSong.CCLI = fmt.Sprintf("%d", song.Data.Attributes.CcliNum)
 	newSong.CopyrightInfo = song.Data.Attributes.Copyright
-	newSong.Lyrics = stripLyrics(arrangement.Data.Attributes.Lyrics)
+	newSong.Lyrics = StripLyrics(arrangement.Data.Attributes.Lyrics)
 	newSong.SongAdmin = song.Data.Attributes.Admin
 	newSong.SongNotes = song.Data.Attributes.Notes
 	return &newSong, nil
 }
 
-func (p pco) getSongsPco(planNumber string) ([]SongInfo, error) {
-	items, err := p.getItemsPco(planNumber)
+func (p pco) GetSongsPco(planNumber string) ([]SongInfo, error) {
+	items, err := p.GetItemsPco(planNumber)
 	if err != nil {
 		return nil, err
 	}
@@ -88,9 +100,9 @@ func (p pco) getSongsPco(planNumber string) ([]SongInfo, error) {
 	return results, nil
 }
 
-func (p pco) getItemsPco(planNumber string) (*PlanItemsPCO, error) {
+func (p pco) GetItemsPco(planNumber string) (*PlanItemsPCO, error) {
 	req := p.getPcoRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans/" + planNumber + "/items")
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -106,9 +118,9 @@ func (p pco) getItemsPco(planNumber string) (*PlanItemsPCO, error) {
 	return &jsonBody, nil
 }
 
-func (p pco) getPlanNumberPco(sundayDate string) (string, error) {
+func (p pco) GetPlanNumberPco(sundayDate string) (string, error) {
 	req := p.getPcoRequest("https://api.planningcenteronline.com/services/v2/service_types/6096/plans?order=-sort_date&per_page=25")
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +165,7 @@ func (p pco) getPcoAuth() (string, string) {
 	return un, pw
 }
 
-func stripLyrics(s string) string {
+func StripLyrics(s string) string {
 	remove := []string{"\n",
 		"Verse:",
 		"Chorus:",

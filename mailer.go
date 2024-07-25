@@ -39,5 +39,21 @@ type mailer struct {
 }
 
 func (m mailer) SendMessage(msg string) error {
-	return smtp.SendMail(m.smtpHost+":"+m.smtpPort, m.auth, m.emailFrom, m.emailTo, []byte(msg))
+	log.Println("Sending mail!")
+	msgWithHeaders := "To: " + m.emailTo[0] + "\r\n" +
+		"From: " + m.emailFrom + "\r\n" +
+		"Subject: Sunday Worship Playlist Script\r\n" +
+		"\r\n" +
+		msg + "\r\n"
+	return smtp.SendMail(m.smtpHost+":"+m.smtpPort, m.auth, m.emailFrom, m.emailTo, []byte(msgWithHeaders))
+}
+
+func (m mailer) SendMessageTo(msg, to string) error {
+	log.Println("Sending mail to!")
+	msgWithHeaders := "To: " + to + "\r\n" +
+		"From: " + m.emailFrom + "\r\n" +
+		"Subject: Sunday Worship Playlist Script\r\n" +
+		"\r\n" +
+		msg + "\r\n"
+	return smtp.SendMail(m.smtpHost+":"+m.smtpPort, m.auth, m.emailFrom, []string{to}, []byte(msgWithHeaders))
 }

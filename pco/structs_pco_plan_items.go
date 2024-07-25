@@ -1,4 +1,4 @@
-package main
+package pco
 
 type PlanItemsPCO struct {
 	Links    LinksPCO           `json:"links"`

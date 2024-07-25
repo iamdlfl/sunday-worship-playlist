@@ -4,7 +4,7 @@
 //    myPlayLists, err := UnmarshalMyPlayLists(bytes)
 //    bytes, err = myPlayLists.Marshal()
 
-package main
+package spotify
 
 import "encoding/json"
 

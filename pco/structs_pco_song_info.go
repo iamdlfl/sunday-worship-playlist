@@ -1,4 +1,4 @@
-package main
+package pco
 
 type SongPCO struct {
 	Included []interface{} `json:"included"`

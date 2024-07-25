@@ -4,7 +4,7 @@
 //    spotifyStructs, err := UnmarshalSpotifyStructs(bytes)
 //    bytes, err = spotifyStructs.Marshal()
 
-package main
+package spotify
 
 import "encoding/json"
 

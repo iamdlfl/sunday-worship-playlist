@@ -1,4 +1,4 @@
-package main
+package pco
 
 type SongInfo struct {
 	Name             string
