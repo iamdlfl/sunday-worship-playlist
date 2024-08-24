@@ -1,5 +1,5 @@
 # Sunday Worship Playlist
-The purpose of this script is to update a Spotify playlist with the songs that will be sung during the upcoming Sunday service for Creekside Community church. 
+The purpose of this script is to update a Spotify playlist with the songs that will be sung during the upcoming Sunday service for Creekside Community Church. 
 This is done with the following steps:
 1. Get songs for the upcoming Sunday using Planning Center Online API.
 2. Get the "Upcoming Sunday" playlist from Spotify.
