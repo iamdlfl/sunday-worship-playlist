@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ var spotifyUrl = "https://api.spotify.com/v1"
 var userId = "onthe_dl"
 
 func main() {
+	// Set up logs, dates, clients, etc.
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	pcoClient := pco.NewPcoClient(configFileName, nil)
 
@@ -42,15 +42,22 @@ func main() {
 
 	upcomingSunday := today.Add(time.Hour * 24 * time.Duration(daysToAdd))
 	formattedSunday := upcomingSunday.Format("2006-01-02")
+
+	/*
+		########     ######     #######
+		##     ##   ##    ##   ##     ##
+		##     ##   ##         ##     ##
+		########    ##         ##     ##
+		##          ##         ##     ##
+		##          ##    ##   ##     ##
+		##           ######     #######
+	*/
 	planNumber, err := pcoClient.GetPlanNumberPco(formattedSunday)
 	if err != nil {
 		log.Println(err)
 		return
 	}
 
-	// Remove when done testing
-	planNumber = "72665641"
-	// planNumber = "72665642"
 	songs, err := pcoClient.GetSongsPco(planNumber)
 	if err != nil {
 		log.Println(err)
@@ -65,6 +72,19 @@ func main() {
 		newSongs = append(newSongs, *newSong)
 	}
 
+	/*
+		 ######    ########     #######    ########   ####   ########   ##    ##
+		##    ##   ##     ##   ##     ##      ##       ##    ##          ##  ##
+		##         ##     ##   ##     ##      ##       ##    ##           ####
+		 ######    ########    ##     ##      ##       ##    ######        ##
+		      ##   ##          ##     ##      ##       ##    ##            ##
+		##    ##   ##          ##     ##      ##       ##    ##            ##
+		 ######    ##           #######       ##      ####   ##            ##
+	*/
+
+	/*
+		TRACKS
+	*/
 	spotifyIds := make([]string, 0, len(newSongs))
 	for _, song := range newSongs {
 		// set up search and do it
@@ -79,13 +99,13 @@ func main() {
 		songCheck := make(map[string]int)
 		numToBeat := -1
 		trackId := ""
-		// Spotify does not sort the tracks by popularity really, though supposedly they try to
-		// sort by a combination of match and popularity. We will sort the results ourselves to be sure.
-		// This way the most popular versions of songs are first (which are generally the examples we use)
-		slices.SortFunc(result.Tracks.Items, func(a, b spotify.ItemSearch) int {
-			return int(a.Popularity) - int(b.Popularity)
-		})
-		for _, item := range result.Tracks.Items {
+		for i := range result.Tracks.Items {
+			if song.Name == "Doxology" {
+				log.Println("Use pre-selected song for Doxology")
+				trackId = "7L5YVihzHRC89rIBknxRDP"
+				break
+			}
+			item := result.Tracks.Items[i]
 			// set songcheck to 0 for this item (spotify song) ID
 			songCheck[item.ID] = 0
 			// iterate through the Spotify artists
@@ -126,9 +146,6 @@ func main() {
 				if strings.Contains(item.Name, "Instrumental") {
 					continue
 				}
-				log.Println("REPLACING ITEM")
-				log.Println(item.Name)
-				log.Println(item.Artists)
 				trackId = item.ID
 				numToBeat = songCheck[item.ID]
 			}
@@ -139,38 +156,63 @@ func main() {
 	}
 
 	log.Println(spotifyIds)
-	playlistName := "Sunday Worship - " + "2024-07-07" //+ formattedSunday
-	existingPlaylists, err := spotifyClient.GetExistingPlaylists()
-	playListId := ""
-
-	for _, pl := range existingPlaylists.Items {
-		if playlistName == pl.Name {
-			playListId = pl.ID
-			if pl.Tracks.Total >= 4 {
-				log.Println("Playlist already created")
-				emailer.SendMessage("Playlist has already been created, and has 4 or more songs. Exit successfully.")
-				return
-			}
-		}
-	}
-
-	if playListId == "" {
-		pl, err := spotifyClient.CreateSpotifyPlaylist(playlistName, userId)
-		if err != nil {
-			log.Println(err)
-			emailer.SendMessage(err.Error() + "\n\nThere was an error creating the playlist")
-		}
-		playListId = pl.ID
-	}
-
 	tracksString := make([]string, 0)
 	for _, track := range spotifyIds {
 		tracksString = append(tracksString, "spotify:track:"+track)
 	}
 
-	err = spotifyClient.AddSongsToPlaylist(playListId, tracksString)
+	/*
+		PLAYLISTS
+	*/
+	// TODO: Remove hardcoded when done testing
+	historicPlaylistName := "Sunday Worship - " + formattedSunday
+	existingPlaylists, err := spotifyClient.GetExistingPlaylists()
+	historicPlaylistId := ""
+
+	// TODO: Update when switch to client account
+	// Handle current Sunday playlist
+	currentSundayPlaylistId := "5w1z8Bxp6DAe1d7to502vm"
+	err = spotifyClient.RemoveAllSongsFromPlaylist(currentSundayPlaylistId)
+	if err != nil {
+		log.Println(err)
+		emailer.SendMessage(err.Error() + "\n\nThere was an error clearing the playlist")
+		return
+	}
+
+	err = spotifyClient.AddSongsToPlaylist(currentSundayPlaylistId, tracksString)
 	if err != nil {
 		emailer.SendMessage("Could not add songs to playlist!")
+		return
+	} else {
+		log.Println("Successfully added songs to current Sunday playlist!")
+	}
+
+	// Handle historic playlist
+	for _, pl := range existingPlaylists.Items {
+		if historicPlaylistName == pl.Name {
+			historicPlaylistId = pl.ID
+			log.Println(historicPlaylistId)
+			if pl.Tracks.Total >= 4 {
+				log.Println("Playlist already created")
+				emailer.SendMessage("Historic playlist has already been created, and has 4 or more songs. Current Sunday playlist updated successfully. Exit successfully.")
+				return
+			}
+		}
+	}
+
+	if historicPlaylistId == "" {
+		pl, err := spotifyClient.CreateSpotifyPlaylist(historicPlaylistName, userId)
+		if err != nil {
+			log.Println(err)
+			emailer.SendMessage(err.Error() + "\n\nThere was an error creating the historic playlist")
+			return
+		}
+		historicPlaylistId = pl.ID
+	}
+
+	err = spotifyClient.AddSongsToPlaylist(historicPlaylistId, tracksString)
+	if err != nil {
+		emailer.SendMessage("Could not add songs to historic playlist!")
 		return
 	}
 

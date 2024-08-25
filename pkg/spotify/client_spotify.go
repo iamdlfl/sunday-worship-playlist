@@ -51,7 +51,7 @@ type spotify struct {
 
 func (s spotify) DoSpotifySearch(searchTerm, searchType string) (SpotifyStructs, error) {
 	escaped := url.PathEscape(searchTerm)
-	req := s.getSpotifyRequest(s.ApiUrl+"/search?type="+searchType+"&limit=10&q="+escaped, http.MethodGet)
+	req := s.getSpotifyRequest(http.MethodGet, s.ApiUrl+"/search?type="+searchType+"&limit=10&q="+escaped, nil)
 	resp, err := s.client.Do(req)
 	if err != nil {
 		return SpotifyStructs{}, err
@@ -71,7 +71,7 @@ func (s spotify) DoSpotifySearch(searchTerm, searchType string) (SpotifyStructs,
 
 func (s spotify) GetExistingPlaylists() (MyPlayLists, error) {
 	allItems := make([]ItemMy, 0)
-	existingPlReq := s.getSpotifyRequest(s.ApiUrl+"/me/playlists?limit=50", http.MethodGet)
+	existingPlReq := s.getSpotifyRequest(http.MethodGet, s.ApiUrl+"/me/playlists?limit=50", nil)
 	existingPlResp, err := s.client.Do(existingPlReq)
 	if err != nil {
 		return MyPlayLists{}, err
@@ -90,7 +90,7 @@ func (s spotify) GetExistingPlaylists() (MyPlayLists, error) {
 	}
 	allItems = append(allItems, existingPlaylists.Items...)
 	for i := 0; i < 10 && existingPlaylists.Next != ""; i++ {
-		existingPlReq := s.getSpotifyRequest(existingPlaylists.Next, http.MethodGet)
+		existingPlReq := s.getSpotifyRequest(http.MethodGet, existingPlaylists.Next, nil)
 		existingPlResp, err := s.client.Do(existingPlReq)
 		if err != nil {
 			return MyPlayLists{}, err
@@ -121,12 +121,7 @@ func (s spotify) CreateSpotifyPlaylist(plName, userId string) (SpotifyPlaylist, 
 	plData["name"] = plName
 	plData["public"] = true
 	jplBody, _ := json.Marshal(plData)
-	plReq, err := http.NewRequest(http.MethodPost, s.ApiUrl+"/users/"+userId+"/playlists", bytes.NewReader(jplBody))
-	if err != nil {
-		return SpotifyPlaylist{}, err
-	}
-
-	plReq.Header.Set("Authorization", "Bearer "+s.token)
+	plReq := s.getSpotifyRequest(http.MethodPost, s.ApiUrl+"/users/"+userId+"/playlists", bytes.NewReader(jplBody))
 	plReq.Header.Set("Content-Type", "application/json")
 	plResp, err := s.client.Do(plReq)
 	if err != nil {
@@ -153,11 +148,7 @@ func (s spotify) AddSongsToPlaylist(pid string, tracks []string) error {
 	addData["playlist_id"] = pid
 	addData["uris"] = tracks
 	jaBody, _ := json.Marshal(addData)
-	addReq, err := http.NewRequest(http.MethodPost, s.ApiUrl+"/playlists/"+pid+"/tracks", bytes.NewReader(jaBody))
-	if err != nil {
-		return err
-	}
-	addReq.Header.Set("Authorization", "Bearer "+s.token)
+	addReq := s.getSpotifyRequest(http.MethodPost, s.ApiUrl+"/playlists/"+pid+"/tracks", bytes.NewReader(jaBody))
 	addReq.Header.Set("Content-Type", "application/json")
 
 	addResp, err := s.client.Do(addReq)
@@ -177,8 +168,82 @@ func (s spotify) AddSongsToPlaylist(pid string, tracks []string) error {
 	return nil
 }
 
-func (s spotify) getSpotifyRequest(url, method string) *http.Request {
-	req, err := http.NewRequest(method, url, nil)
+func (s spotify) GetPlaylistById(pid string) (SpotifyPlaylist, error) {
+	p := SpotifyPlaylist{}
+	req := s.getSpotifyRequest(http.MethodGet, s.ApiUrl+"/playlists/"+pid, nil)
+	res, err := s.client.Do(req)
+	if err != nil {
+		return p, err
+	}
+
+	if res.StatusCode >= http.StatusBadRequest {
+		log.Println("Status code not ok: ", res.StatusCode)
+		return p, errors.New("status code >= 400")
+	}
+
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return p, err
+	}
+
+	jsonErr := json.Unmarshal(body, &p)
+
+	return p, jsonErr
+}
+
+func (s spotify) RemoveAllSongsFromPlaylist(pid string) error {
+	type TrackToDelete struct {
+		Uri string `json:"uri"`
+	}
+	type DeleteBody struct {
+		Tracks []TrackToDelete `json:"tracks"`
+	}
+	playlist, err := s.GetPlaylistById(pid)
+	if err != nil {
+		return err
+	}
+	delReqBody := DeleteBody{
+		Tracks: []TrackToDelete{},
+	}
+	if len(playlist.Tracks.Items) == 0 {
+		log.Println("No tracks found to delete")
+		// early return - there are no tracks on this playlist to remove
+		return nil
+	}
+	for _, trackItem := range playlist.Tracks.Items {
+		delTrack := TrackToDelete{Uri: trackItem.Track.URI}
+		delReqBody.Tracks = append(delReqBody.Tracks, delTrack)
+	}
+	log.Printf("Deleting %d tracks from playlist %s", len(delReqBody.Tracks), pid)
+
+	jaBody, err := json.Marshal(delReqBody)
+	if err != nil {
+		log.Println(err)
+	}
+	delReq := s.getSpotifyRequest(http.MethodDelete, s.ApiUrl+"/playlists/"+pid+"/tracks", bytes.NewReader(jaBody))
+	delReq.Header.Set("Content-Type", "application/json")
+
+	delResp, err := s.client.Do(delReq)
+	if err != nil {
+		return err
+	}
+
+	defer delResp.Body.Close()
+	delRespBody, err := io.ReadAll(delResp.Body)
+	if err != nil {
+		return err
+	}
+	log.Println(string(delRespBody))
+	if delResp.StatusCode >= http.StatusBadRequest {
+		return errors.New("status code >= 400")
+	}
+	return nil
+}
+
+// getSpotifyRequest just returns a request with the authorization already filled out
+func (s spotify) getSpotifyRequest(method, url string, body io.Reader) *http.Request {
+	req, err := http.NewRequest(method, url, body)
 	if err != nil {
 		temp := http.Request{}
 		req = &temp
